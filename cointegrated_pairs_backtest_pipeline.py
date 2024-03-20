@@ -15,6 +15,7 @@ def calculate_returns(prices):
     returns = [(prices[i] - prices[i-1]) / prices[i-1] for i in range(1, len(prices))]
     return returns
 
+
 def correlation_of_returns(asset1_prices, asset2_prices, threshold):
 
     asset1_returns = calculate_returns(asset1_prices)
@@ -23,6 +24,7 @@ def correlation_of_returns(asset1_prices, asset2_prices, threshold):
     correlation = np.corrcoef(asset1_returns, asset2_returns)[0, 1]
 
     return abs(correlation) > threshold
+
 
 def calculate_rolling_beta(stock1_prices, stock2_prices, lookback_period):
 
@@ -63,8 +65,7 @@ def cointegration_test(y, x):
     else:
         return False, -1
 
-#calculate cointegration spread between stocks
-
+#calculate spread between cointegrated stocks
 def cointegration_spread(p1_series, p2_series, lookback_period):
 
     beta = calculate_rolling_beta(p1_series,p2_series,lookback_period)
@@ -73,13 +74,13 @@ def cointegration_spread(p1_series, p2_series, lookback_period):
     return spread
 
 
+#standardization calculated on rolling basis to avoid lookahead bias
 def standardized_cointegration_spread(spread_series,lookback_period):
     
     mean = spread_series.rolling(lookback_period).mean()
     std = spread_series.rolling(lookback_period).std()
     standardized_spread = (spread_series - mean)/std
     return standardized_spread
-
 
 
 def signal_labelling(spread_series_df,z_enter,z_exit,z_stoploss,days_limit):
@@ -157,8 +158,6 @@ def signal_labelling(spread_series_df,z_enter,z_exit,z_stoploss,days_limit):
                     cooldown = False
 
     return spread_series_df
-
-
 
 
 def daily_returns(signal_labelled_df):
@@ -239,23 +238,51 @@ def surviving_ticker_paths(dict_of_sets, dict_of_paths, reference_year):
         filtered_dict_of_paths[year] = filtered_filenames
 
     return filtered_dict_of_paths
+    
 
-#keep file paths of tickers in data set that were not delisted up to the reference year
-def surviving_ticker_paths(dict_of_sets, dict_of_paths, reference_year):
+def clean_sptm_csv():
     
-    intersection_set = dict_of_sets[reference_year]
+    #keeps columns containing constituents of december of each year
+    sector_list = ["communicationservices","consumerdiscretionary","consumerstaples","energy",
+         "financials","healthcare","industrials","informationtechnology","materials","realestate","utilities"]
+    for sector in sector_list: 
+        holdings_df = pd.read_csv(f"sptm_by_industry\\sptm_{sector}.csv")
+        holdings_df = holdings_df[["Exchange:Ticker"]+[i for i in holdings_df.columns if "Dec" in i]]
+        for i in holdings_df.columns[1:]:
+            temp = i.split("-")[2]
+            temp = temp.split()[0]
+            holdings_df.rename({i:temp},axis=1,inplace=True)
+        holdings_df=holdings_df[holdings_df["Exchange:Ticker"].notna()]
+        holdings_df["Exchange:Ticker"]=holdings_df["Exchange:Ticker"].apply(lambda x: x if "Inactive" not in x else np.nan)
+        holdings_df=holdings_df[holdings_df["Exchange:Ticker"].notna()]
+        holdings_df["Ticker"]=holdings_df["Exchange:Ticker"].apply(lambda x: x.split(":")[-1])
+        holdings_df = holdings_df.replace("  -  ",np.nan)
+        holdings_df.to_csv(f"sptm_by_industry\\sptm_clean_{sector}.csv")
+        del holdings_df
+        
     
-    for year, set in dict_of_sets.items():
-        intersection_set = intersection_set.intersection(set)
-    
-    filtered_dict_of_paths = {}
-    
-    for year, filenames in dict_of_paths.items():
-        filtered_filenames = [filename for filename in filenames if filename.split("_")[0] in intersection_set]
-        filtered_dict_of_paths[year] = filtered_filenames
+def sptm_constituents(dict_of_tickers):
 
-    return filtered_dict_of_paths
-
+    dict_of_constituents = {}
+    for year in dict_of_tickers.keys():
+        
+        constituents_by_sector = {"communicationservices":[],"consumerdiscretionary":[],"consumerstaples":[],"energy":[],
+             "financials":[],"healthcare":[],"industrials":[],"informationtechnology":[],"materials":[],"realestate":[],"utilities":[]}
+        for sector in constituents_by_sector.keys():
+    
+            #sorts ticker paths into industry lists if they were sptm constituents
+            holdings_df = pd.read_csv(f"sptm_by_industry\\sptm_clean_{sector}.csv")
+            temp = holdings_df[str(int(year)-1)]
+            temp_index = temp[temp.notna()].index
+            holdings_df = holdings_df.loc[temp_index]["Ticker"].unique()
+            for tick in holdings_df:
+                temp_filename = f"{tick}_{year}.csv"
+                if temp_filename in filtered_dict_of_paths[year]:
+                    constituents_by_sector[sector].append(temp_filename)
+                    
+        dict_of_constituents[year]=constituents_by_sector
+        
+    return dict_of_constituents
 
     
 def sptm_constituents(dict_of_tickers):
@@ -282,33 +309,80 @@ def sptm_constituents(dict_of_tickers):
     return dict_of_constituents
 
 
-    
-def sptm_constituents(dict_of_tickers):
+def find_pairs_by_industry_year(dict_of_constituents):
 
-    dict_of_constituents = {}
-    for year in dict_of_tickers.keys():
-        
-        constituents_by_sector = {"communicationservices":[],"consumerdiscretionary":[],"consumerstaples":[],"energy":[],
+    #old column names from Millisecond Data
+    old_cols = ['Date', 'ticker', 'ClosePrice', 'OpenPrice', 'nbb_4pm', 'nbo_4pm', 'total_vol']
+    main_cols = ['date', 'ticker', 'Close', 'Open', 'bid', 'ask', 'Volume']
+
+    dict_of_pairs = {}
+    #pairs found in year t will be traded in year t+1
+    for year in list(dict_of_constituents.keys())[:-1]:
+
+        pairs_by_sector = {"communicationservices":[],"consumerdiscretionary":[],"consumerstaples":[],"energy":[],
              "financials":[],"healthcare":[],"industrials":[],"informationtechnology":[],"materials":[],"realestate":[],"utilities":[]}
-        for sector in constituents_by_sector.keys():
-    
-            #sorts ticker paths into industry lists if they were sptm constituents
-            holdings_df = pd.read_csv(f"sptm_by_industry\\sptm_clean_{sector}.csv")
-            temp = holdings_df[str(int(year)-1)]
-            temp_index = temp[temp.notna()].index
-            holdings_df = holdings_df.loc[temp_index]["Ticker"].unique()
-            for tick in holdings_df:
-                temp_filename = f"{tick}_{year}.csv"
-                if temp_filename in filtered_dict_of_paths[year]:
-                    constituents_by_sector[sector].append(temp_filename)
+        for sector in pairs_by_sector.keys():
+            
+            print(f"looking for pairs in year {year} in sector {sector}")
+            year_files = sorted(dict_of_constituents[year][sector])
+            #checks all possible combinations of pairs
+            for i in range(len(year_files)-1):
                     
-        dict_of_constituents[year]=constituents_by_sector
-        
-    return dict_of_constituents
+                ticker_1 = year_files[i]
+                print(f"looking for pairs for {ticker_1}")
+                ticker_1_df = pd.read_csv(f'C:\\Users\\wvill\\OneDrive\\FQE\\data2\\final_file_data\\{ticker_1}')
+                ticker_1_df = ticker_1_df.rename(columns={old_col: new_col for old_col, new_col in zip(old_cols, main_cols)})
+                ticker_1_df = ticker_1_df[ticker_1_df['Close'].notna()].reset_index(drop=True)
+                
+                for j in range(i+1,len(year_files)):
+                    
+                    ticker_2 = year_files[j]
+                    ticker_2_df = pd.read_csv(f'C:\\Users\\wvill\\OneDrive\\FQE\\data2\\final_file_data\\{ticker_2}')
+                    ticker_2_df = ticker_2_df.rename(columns={old_col: new_col for old_col, new_col in zip(old_cols, main_cols)})
+                    ticker_2_df = ticker_2_df[ticker_2_df['Close'].notna()].reset_index(drop=True)
+                    ticker_2_df["date"] = pd.to_datetime(ticker_2_df["date"])
+                    
+                    ticker_1_df_temp = ticker_1_df.copy()
+                    ticker_1_df_temp["date"] = pd.to_datetime(ticker_1_df_temp["date"])
+    
+                    #intersection of dates in ticker_1 and ticker_2 dfs
+                    intersect_dates = set(ticker_1_df_temp['date']).intersection(set(ticker_2_df['date']))
+    
+                    ticker_1_df_temp = ticker_1_df_temp[ticker_1_df_temp['date'].isin(intersect_dates)]
+                    ticker_2_df = ticker_2_df[ticker_2_df['date'].isin(intersect_dates)]
+                    
+                    ticker_1_df_temp = ticker_1_df_temp.reset_index(drop=True)
+                    ticker_2_df = ticker_2_df.reset_index(drop=True)
+                    
+                    try:
+                        #correlation test to further filter out pairs (refer to paper)
+                        are_correlated = correlation_of_returns(ticker_1_df_temp["Close"],ticker_2_df["Close"],threshold=0.7)
+                        if are_correlated:
+                            print(f"{ticker_1},{ticker_2} passed correlation test")
+                            are_cointegrated, p = cointegration_test(ticker_1_df_temp['Close'], ticker_2_df['Close'])
+    
+                            if are_cointegrated:
+                                print(f"{(ticker_1,ticker_2)} passed cointegration test")
+                                pairs_by_sector[sector].append([ticker_1, ticker_2])
+                                print(f"pair added {(ticker_1,ticker_2)}")
+                            else:
+                                print(f"{(ticker_1,ticker_2)} failed cointegration test")
 
+                    except Exception as e:
+                        print(f"failed to perform test on {(ticker_1,ticker_2)}")
+                        print(e)
+                        continue
+                        
+        print(f"finished looking for pairs in year: {year}, sector: {sector}")
+    
+        temp_pairs_df = pd.DataFrame({sector: pairs_by_sector[sector]})
+        temp_pairs_df.to_csv(f"pairs_found\\{year}_{sector}_pairs.csv", index=False)
+    
+        dict_of_pairs[year]=pairs_by_sector
+
+    return dict_of_pairs
 
 #create historical trade table use signal labelling function
-
 def create_trade_table(dict_of_pairs,signal_label_args):
 
     z_exit = signal_label_args["z_exit"]
@@ -435,7 +509,8 @@ def create_trade_table(dict_of_pairs,signal_label_args):
         else:
             print("no trades found")
             return None
-        
+
+
 def main():
 
     warnings.filterwarnings('ignore')
