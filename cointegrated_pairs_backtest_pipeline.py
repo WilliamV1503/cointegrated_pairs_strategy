@@ -531,7 +531,7 @@ def main():
         "spread_series_df": None,
         "z_enter": 2,
         "z_exit": 1,
-        "z_stoploss": 1.2,
+        "z_stoploss": 2.2,
         "days_limit": 21
     }
     trade_table = create_trade_table(dict_of_pairs,signal_labelling_args)
