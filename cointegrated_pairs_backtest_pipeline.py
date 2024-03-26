@@ -355,7 +355,7 @@ def find_pairs_by_industry_year(dict_of_constituents):
                     ticker_2_df = ticker_2_df.reset_index(drop=True)
                     
                     try:
-                        #correlation test to further filter out pairs (refer to paper)
+                        #correlation test to further filter out pairs (refer to https://www.quantconnect.com/research/15347/intraday-dynamic-pairs-trading-using-correlation-and-cointegration-approach/p1)
                         are_correlated = correlation_of_returns(ticker_1_df_temp["Close"],ticker_2_df["Close"],threshold=0.7)
                         if are_correlated:
                             print(f"{ticker_1},{ticker_2} passed correlation test")
